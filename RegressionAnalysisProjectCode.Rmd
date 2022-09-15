@@ -1,0 +1,391 @@
+---
+title: "PSTAT 126 Project"
+author: "Ana Caklovic and Sukanya Joshi"
+date: "11/16/2018"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r}
+#student <- read.csv2(file.choose())
+student <- read.csv("student-mat(1).csv", header = TRUE)
+```
+
+create new, smaller data frames to make it easier to plot and create scatterplot matrices to check correlations 
+```{r}
+newstudent1 = data.frame(student$school, student$sex, student$age, student$address, student$famsize, student$Pstatus)
+newstudent2 = data.frame(student$Medu, student$Fedu, student$Mjob, student$Fjob, student$reason, student$guardian)
+newstudent3 = data.frame(student$traveltime, student$studytime, student$failures, student$schoolsup, student$famsup, student$paid)
+newstudent4 = data.frame(student$activities, student$nursery, student$higher, student$internet, student$romantic, student$famrel, student$freetime)
+newstudent5 = data.frame(student$goout, student$Dalc, student$Walc, student$health)
+newstudent6 = data.frame(student$absences, student$G1, student$G2, student$G3)
+
+#scatter1 = pairs(newstudent1)
+#scatter2 = pairs(newstudent2)
+#scatter3 = pairs(newstudent3)
+#scatter4 = pairs(newstudent4)
+#scatter5 = pairs(newstudent5)
+scatter6 = pairs(newstudent6)
+```
+
+DIAGNOSTICS (OLD MODEL):
+```{r}
+#par(mfrow =c(1,3))
+absences = student$absences
+finalgrade = student$G3
+plot(absences, finalgrade, xlab="Number of Absences", ylab = "Final Grade (1-20)", main = "Final Grade vs. Number of Absences")
+
+student.fit = lm(finalgrade ~ absences)
+abline(student.fit) # intercept = 10.30327, slope: 0.01961
+# can see our plot isn't linear, will need some kind of transformation
+
+# Res vs. Fit:
+x = student$absences
+y = student$G3
+xbar = mean(x)
+ybar = mean(y)
+yhat = fitted(student.fit)
+e = y - yhat
+plot(yhat, e, xlab = 'Fitted Values', ylab = 'Residual', main = 'Residual vs Fit')
+abline(h = 0, lty = 2)
+# clustering on the left (clear funnel effect)
+
+#Normal Q-Q plot
+student.res = resid(student.fit)
+qqnorm(student.res)
+qqline(student.res)
+# very skewed data, especially on the left tail 
+shapiro.test(student.res)
+# p-value = 4.283e-12, reject H0: data is normal --> know it has normality problem 
+
+summary(student.fit, data = "student")$r.squared
+hist(e, xlab = 'Residuals', main = 'Histogram of Residuals')
+```
+
+TRANSFORMATIONS:
+--> seem to have problems with everything (linearity, equal variances, normality) so take log of both X and Y
+```{r message=FALSE, warning=FALSE}
+x = student$absences
+y = student$G3
+x.new = log(x)
+#x.new
+y.new = log(y)
+#y.new
+#stud.fit.new = lm(y.new ~ x.new)
+# error due to log = "-Inf" bc can't do log of 0, replace "-Inf" with "1"
+
+library(plyr)
+x.new = mapvalues(x.new, from = "-Inf", to = "1")
+x.new = as.numeric(as.character(x.new))
+y.new = mapvalues(y.new, from = "-Inf", to = "1")
+y.new = as.numeric(as.character(y.new))
+stud.fit.new = lm(y.new ~ x.new)
+```
+
+DIAGNOSTICS (NEW MODEL):
+```{r}
+# res vs fit:
+yhat.new = fitted(stud.fit.new)
+e.new = y.new - yhat.new
+plot(yhat.new, e.new, xlab = 'Fitted Values', ylab = 'Residual', main = 'Residual vs Fit')
+abline(h = 0, lty = 2)
+
+# Q-Q plot:
+qqnorm(e.new)
+qqline(e.new)
+
+# R^2
+summary(stud.fit.new, data = "student")$r.squared
+```
+
+BOX COX TRANSFORMATION:
+```{r message=FALSE, warning=FALSE}
+library(plyr)
+library(SemiPar)
+library(MASS)
+attach(student)
+y2 = student$G3
+y2 = mapvalues(y2, from = "0", to = "1")
+y2 = as.numeric(as.character(y2))
+bc = boxcox(y2 ~ x.new)
+
+lambda = bc$x # lambda values
+lik = bc$y # likelihood values for SSE
+bc.df = cbind(lambda, lik)
+sorted_bc = bc.df[order(-lik)] # values are sorted to identify the lambda value for the maximum log likelihood for obtaining minimum SSE
+head(sorted_bc, n=10)
+
+y_lambda = y2^(1.191919)
+fit.new = lm(y_lambda ~ x.new)
+summary(fit.new)$r.squared
+
+yhat.new = fitted(fit.new)
+e.new = y_lambda - yhat.new
+
+# new scatterplot:
+plot(x.new, y_lambda, xlab = 'ln(absences)', ylab = '(final grade)^(1.19)', main = 'Scatterplot of (final grade)^(1.19) \n vs. ln(absences)')
+abline(fit.new)
+
+# res vs. fit
+plot(yhat.new, e.new, xlab = 'Fitted Values', ylab = 'Residual', main = 'Residual vs Fitted Values')
+abline(h = 0, lty = 2)
+hist(e.new, xlab = 'Residuals', main = 'Histogram of Residuals')
+
+#normal Q-Q plot
+qqnorm(e.new)
+qqline(e.new)
+
+# Box Cox in one line:
+#boxcox(y2 ~ absences, lambda = seq(0,1,0.1))
+```
+
+
+SIGNIFICANCE OF OTHER PREDICTORS:
+
+```{r}
+### AIC - choosing bw our categorical predictors: (TEST 1)
+mod0 = lm(finalgrade ~ 1)
+mod.upper = lm(finalgrade ~ student$traveltime + student$studytime + student$failures + student$activities + student$freetime)
+step(mod0, scope = list(mod0, upper = mod.upper))
+```
+The AIC test suggest that our best model would include the failures and traveltime categorical predictors.
+
+Let's check a few more predictors: (focus on family life)
+```{r}
+# TEST 2
+mod02 = lm(finalgrade ~ 1)
+mod.upper2 = lm(finalgrade ~ student$Medu + student$Fedu + student$Mjob + student$Fjob + student$famsup + student$famrel)
+step(mod02, scope = list(mod02, upper = mod.upper2))
+```
+The suggested model includes the Medu (mother's education) and famsup (family educational support) predictors 
+
+Now, let's focus on predictors that look at social life:
+```{r}
+# TEST 3  
+mod03 = lm(finalgrade ~ 1)
+mod.upper3 = lm(finalgrade ~ student$goout + student$Dalc + student$Walc + student$romantic + student$activities + student$freetime)
+step(mod03, scope = list(mod03, upper = mod.upper3))
+```
+We can see the best model includes the predictors goout and romantic. 
+
+```{r}
+summary(lm(finalgrade ~ student$absences + student$traveltime))
+summary(lm(finalgrade ~ student$absences + student$failures))
+```
+
+
+INTERACTIONS
+Now, we want to check if any of these predictors interact with absences:
+
+```{r}
+### AIC Model 1: failures and traveltime
+mod.reduced = lm(finalgrade ~ absences + student$failures + student$traveltime)
+mod.full = lm(finalgrade ~ absences + student$failures + student$traveltime + absences*student$failures + absences*student$traveltime)
+anova(mod.reduced, mod.full)
+# p-value = 0.006 < 0.05 --> can reject null
+```
+
+
+```{r}
+### AIC Model 2: Medu and famsup
+mod.reduced = lm(finalgrade ~ absences + student$Medu + student$famsup)
+mod.full = lm(finalgrade ~ absences + + student$Medu + student$famsup + absences*student$Medu + absences*student$famsup)
+anova(mod.reduced, mod.full)
+# p-value = 0.11 > 0.05 --> fail to reject H0 (can't use full)
+
+### AIC Model 3: goout and romantic
+mod.reduced = lm(finalgrade ~ absences + student$goout + student$romantic)
+mod.full = lm(finalgrade ~ absences + student$goout + student$romantic + absences*student$goout + absences*student$romantic)
+anova(mod.reduced, mod.full)
+# p-value = 0.4097 > 0.05 --> fail to reject H0 (can't use full)
+```
+
+------Research questions we can test:
+
+Question 2) T-tests for testing the significance of failures and traveltime
+```{r}
+# failures
+#summary(lm(finalgrade ~ student$absences + student$failures)) (???)
+
+summary(lm(finalgrade ~ student$failures))
+```
+
+
+```{r}
+# traveltime 
+#summary(lm(finalgrade ~ student$absences + student$traveltime)) (???)
+
+summary(lm(finalgrade ~ student$traveltime))
+```
+
+
+
+
+1) For every amount of absences, is there a difference in the mean effect for the other two predictors? We need to test the null hypothesis: H0: B2 = B3 = B12 = B13 = 0 vs H1: at least one of these slope parameters is not 0.
+```{r}
+# using Model 1 (failures and traveltime)
+mod.reduced = lm(finalgrade ~ absences)
+mod.full = lm(finalgrade ~ absences + student$failures + student$traveltime + absences*student$failures + absences*student$traveltime)
+anova(mod.reduced, mod.full)
+
+# there's a significant difference in all the terms 
+```
+
+2) Does the effect of absence on the other predictor’s effectiveness depend
+on that predictor? We need to test the null hypothesis H0: B12 = B13 = 0 vs H1: at least one of these slope parameters is not 0.
+```{r}
+# same code as seen above, when testing models for interactions with absences
+### AIC Model 1: failures and traveltime
+mod.reduced = lm(finalgrade ~ absences + student$failures + student$traveltime)
+mod.full = lm(finalgrade ~ absences + student$failures + student$traveltime + absences*student$failures + absences*student$traveltime)
+anova(mod.reduced, mod.full)
+# p-value = 0.006 < 0.05 --> can reject null
+# at least one of the interaction parameters is not zero
+```
+
+-> Now let us see which interaction term is significant:
+```{r}
+# Testing significance of absences*student$failures:
+mod.reduced = lm(finalgrade ~ absences + student$failures + student$traveltime + absences*student$traveltime)
+mod.full = lm(finalgrade ~ absences + student$failures + student$traveltime + absences*student$failures + absences*student$traveltime)
+anova(mod.reduced, mod.full)
+
+```
+```{r}
+# Testing significance of absences*student$traveltime:
+mod.reduced = lm(finalgrade ~ absences + student$failures + student$traveltime + absences*student$failures)
+mod.full = lm(finalgrade ~ absences + student$failures + student$traveltime + absences*student$failures + absences*student$traveltime)
+anova(mod.reduced, mod.full)
+# the interaction term that is significant is: absences*student$failures
+# so the failures predictor has an interaction with absences; the traveltime predictor does not 
+```
+
+
+
+```{r}
+# interaction between failures and traveltime?
+mod.reduced = lm(finalgrade ~ absences + student$failures + student$traveltime + absences*student$failures)
+mod.full = lm(finalgrade ~ absences + student$failures + student$traveltime + absences*student$failures + student$failures*student$traveltime)
+anova(mod.reduced, mod.full)
+```
+
+Now, let us test the new model to ensure the predictors and interaction terms are all significant:
+```{r}
+#### AIC of new model:#####
+mod0 = lm(finalgrade ~ absences)
+mod.upper = lm(finalgrade ~ absences + student$failures + student$traveltime + absences*student$failures + absences*student$traveltime)
+step(mod0, scope = list(mod0, upper = mod.upper))
+```
+FINAL MODEL: absences + failures + traveltime + absences x failures + failures x traveltime
+
+
+-------------------------------------------------------------
+Checking (running diagnostics on) the New/Final Model:
+
+```{r}
+### Scatterplot matrix:
+finalstudent = data.frame(student$absences, student$failures, student$traveltime, absences*student$failures, student$G3)
+pairs(finalstudent)
+# just to take a closer look at correlations:
+finalstudent2 = data.frame(student$absences, absences*student$failures, student$G3)
+pairs(finalstudent2)
+
+### FINAL MODEL:
+finalmod = lm(finalgrade ~ absences + failures + traveltime + absences*failures + traveltime*failures, data= student)
+
+### Residual vs. predictor:
+
+# Residual vs. Absences (# other plots are the same since this is the only numerical vector)
+x2 = student$absences
+y = student$G3
+xbar = mean(x2)
+ybar = mean(y)
+yhat = fitted(finalmod) 
+e = y - yhat
+plot(x2, e, xlab = 'Predictor (absences)', ylab = 'Residual', main = 'Residual vs Predictor (absences)')
+abline(h = 0, lty = 2)
+# clustering on the left (clear the fanning effect)
+
+
+### Normal Q-Q plot
+student.res = resid(finalmod)
+finalstudent.res = resid(finalmod)
+qqnorm(finalstudent.res) 
+qqline(finalstudent.res)
+# normality issue (diverges on the tails)
+
+```
+
+TRANSFORMATIONS ON FINAL MODEL:
+
+```{r}
+y = student$G3
+x.new = log(student$absences) # can I just take the log of the numerical predictor???
+#x.new
+y.new = log(y)
+#y.new
+#stud.fit.new = lm(y.new ~ x.new)
+# error due to log = "-Inf" bc can't do log of 0, replace "-Inf" with "1"
+
+library(plyr)
+x.new = mapvalues(x.new, from = "-Inf", to = "1")
+x.new = as.numeric(as.character(x.new))
+y.new = mapvalues(y.new, from = "-Inf", to = "1")
+y.new = as.numeric(as.character(y.new))
+stud.fit2.new = lm(y.new ~ x.new + failures + traveltime + absences*failures, data= student)
+
+### DIAGNOTICS OF FINAL MODEL: 
+
+# res vs predictor:
+yhat.new = fitted(stud.fit2.new)
+e.new = y.new - yhat.new
+plot(x.new, e.new, xlab = 'Predictor', ylab = 'Residual', main = 'Residual vs Predictor')
+abline(h = 0, lty = 2)
+
+# Q-Q plot:
+qqnorm(e.new)
+qqline(e.new)
+```
+
+BOX COX TRANSFORMATION: 
+
+```{r message=FALSE, warning=FALSE}
+library(plyr)
+library(SemiPar)
+library(MASS)
+attach(student)
+y2 = student$G3
+y2 = mapvalues(y2, from = "0", to = "1")
+y2 = as.numeric(as.character(y2))
+bc2 = boxcox(y2 ~ x.new + failures + traveltime + absences*failures, data= student)
+
+lambda = bc2$x # lambda values
+lik = bc2$y # likelihood values for SSE
+bc.df = cbind(lambda, lik)
+sorted_bc = bc.df[order(-lik)] # values are sorted to identify the lambda value for the maximum log likelihood for obtaining minimum SSE
+head(sorted_bc, n=10)
+
+y_lambda = y2^(1.151515)
+fit.new = lm(y_lambda ~ x.new + failures + traveltime + absences*failures, data= student)
+summary(fit.new)$r.squared
+
+yhat.new = fitted(fit.new)
+e.new = y_lambda - yhat.new
+
+# new scatterplot:
+plot(x.new, y_lambda, xlab = 'ln(absences)', ylab = '(final grade)^(1.15)', main = 'Scatterplot of (final grade)^(1.19) \n vs. ln(absences)')
+abline(fit.new, col = 2)
+
+# res vs. predictor
+plot(x.new, e.new, xlab = 'Predictor (absences)', ylab = 'Residual', main = 'Residual vs Predictor (absences)')
+abline(h = 0, lty = 2)
+hist(e.new, xlab = 'Residuals', main = 'Histogram of Residuals')
+
+#normal Q-Q plot
+qqnorm(e.new)
+qqline(e.new)
+
+hist(e.new, xlab = 'Residuals', main = 'Histogram of Residuals (Final Model)')
+```
+
